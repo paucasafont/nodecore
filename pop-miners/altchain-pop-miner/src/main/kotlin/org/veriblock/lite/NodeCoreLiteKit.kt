@@ -18,14 +18,20 @@ import org.veriblock.core.wallet.DefaultAddressManager
 import org.veriblock.lite.core.Balance
 import org.veriblock.lite.core.Context
 import org.veriblock.lite.core.Event
+import org.veriblock.lite.net.GatewayStrategy
 import org.veriblock.lite.net.NodeCoreGateway
+import org.veriblock.lite.net.NodeCoreGatewayFactory
 import org.veriblock.lite.net.NodeCoreGatewayImpl
 import org.veriblock.lite.net.NodeCoreNetwork
+import org.veriblock.lite.params.NetworkParameters
 import org.veriblock.lite.transactionmonitor.TM_FILE_EXTENSION
 import org.veriblock.lite.transactionmonitor.TransactionMonitor
 import org.veriblock.lite.transactionmonitor.loadTransactionMonitor
 import org.veriblock.miners.pop.service.sec
 import org.veriblock.sdk.models.Address
+import veriblock.SpvContext
+import veriblock.model.DownloadStatusResponse
+import veriblock.net.LocalhostDiscovery
 import java.io.File
 import java.io.IOException
 
@@ -40,6 +46,8 @@ class NodeCoreLiteKit(
     lateinit var transactionMonitor: TransactionMonitor
     lateinit var network: NodeCoreNetwork
     lateinit var gateway: NodeCoreGateway
+    lateinit var gatewayStrategy: GatewayStrategy
+    lateinit var spvContext: SpvContext
 
     var beforeNetworkStart: () -> Unit = {}
     val balanceChangedEvent = Event<Balance>()
@@ -49,9 +57,16 @@ class NodeCoreLiteKit(
         if (!context.directory.exists() && !context.directory.mkdirs()) {
             throw IOException("Unable to create directory")
         }
-
-        this.gateway = NodeCoreGatewayImpl(context.networkParameters)
         addressManager = loadAddressManager()
+
+        if (context.networkParameters.isSpv) {
+            this.spvContext = initSpvContest(context.networkParameters, addressManager.all)
+            this.gatewayStrategy = NodeCoreGatewayFactory.createSpv(this.spvContext)
+        } else {
+            this.gatewayStrategy = NodeCoreGatewayFactory.createFullNode(context.networkParameters)
+        }
+
+        this.gateway = NodeCoreGatewayImpl(context.networkParameters, gatewayStrategy)
         transactionMonitor = createOrLoadTransactionMonitor()
 
         network = NodeCoreNetwork(
@@ -74,9 +89,7 @@ class NodeCoreLiteKit(
     }
 
     fun shutdown() {
-        if (this::network.isInitialized) {
-            network.shutdown()
-        }
+        gatewayStrategy.shutdown()
     }
 
     fun balanceUpdater() {
@@ -126,5 +139,33 @@ class NodeCoreLiteKit(
         addressManager
     } catch (e: Exception) {
         throw IOException("Unable to load the address manager", e)
+    }
+
+    private fun initSpvContest(networkParameters: NetworkParameters, addresses: Collection<org.veriblock.core.wallet.Address>): SpvContext {
+        val spvContext = SpvContext()
+        spvContext.init(
+            networkParameters.spvNetworkParameters,
+            LocalhostDiscovery(networkParameters.spvNetworkParameters), false
+        )
+        spvContext.peerTable.start()
+
+        for (address in addresses) {
+            spvContext.addressManager.monitor(address)
+        }
+
+        logger.info { "Initialize SPV: " }
+        while (true) {
+            val status: DownloadStatusResponse = spvContext.peerTable.downloadStatus
+            if (status.downloadStatus.isDiscovering) {
+                logger.info { "Waiting for peers response." }
+            } else if (status.downloadStatus.isDownloading) {
+                logger.info { "Blockchain is downloading. " + status.currentHeight + " / " + status.bestHeight }
+            } else {
+                logger.info { "Blockchain is ready. Current height " + status.currentHeight }
+                break
+            }
+            Thread.sleep(5000L)
+        }
+        return spvContext
     }
 }

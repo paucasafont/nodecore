@@ -27,22 +27,15 @@ import org.veriblock.sdk.models.VeriBlockBlock
 import org.veriblock.sdk.models.VeriBlockPublication
 import org.veriblock.sdk.models.VeriBlockTransaction
 import java.util.concurrent.locks.ReentrantLock
-import java.util.stream.Collectors
 import kotlin.concurrent.withLock
 import kotlin.math.abs
 
 private val logger = createLogger {}
 
 class NodeCoreGatewayImpl(
-    private val params: NetworkParameters
+    private val params: NetworkParameters,
+    private val gatewayStrategy: GatewayStrategy
 ) : NodeCoreGateway {
-
-    private val gatewayStrategy: GatewayStrategy = NodeCoreGatewayFactory.create(params)
-
-    @Throws(InterruptedException::class)
-    override fun shutdown() {
-        gatewayStrategy.shutdown()
-    }
 
     override fun getBalance(address: String): Balance {
         logger.debug { "Requesting balance for address $address..." }
@@ -136,7 +129,7 @@ class NodeCoreGatewayImpl(
                 request.networkHeight,
                 request.localBlockchainHeight,
                 blockDifference,
-                request.networkHeight > 0 && blockDifference < 4
+                request.networkHeight > 0 && blockDifference < 10
             )
         } catch (e: StatusRuntimeException) {
             logger.warn("Unable to perform the GetStateInfoRequest request to NodeCore (is it reachable?)")

@@ -16,22 +16,16 @@ import org.veriblock.lite.net.impl.GatewayStrategyGrpcImpl
 import org.veriblock.lite.net.impl.GatewayStrategySpvImpl
 import org.veriblock.lite.params.NetworkParameters
 import veriblock.SpvContext
-import veriblock.model.DownloadStatusResponse
-import veriblock.net.BootstrapPeerDiscovery
-
-private val logger = createLogger {}
 
 object NodeCoreGatewayFactory {
 
-    fun create(networkParameters: NetworkParameters): GatewayStrategy {
-
-        if (!networkParameters.isSpv) {
-            val rpcConfiguration = configure(networkParameters)
-            val channelBuilder = ChannelBuilder(rpcConfiguration)
-            val channel = channelBuilder.buildManagedChannel()
-            val blockingStub = AdminGrpc.newBlockingStub(channelBuilder.attachPasswordInterceptor(channel))
-                .withMaxInboundMessageSize(20 * 1024 * 1024)
-                .withMaxOutboundMessageSize(20 * 1024 * 1024)
+    fun createFullNode(networkParameters: NetworkParameters): GatewayStrategy {
+        val rpcConfiguration = configure(networkParameters)
+        val channelBuilder = ChannelBuilder(rpcConfiguration)
+        val channel = channelBuilder.buildManagedChannel()
+        val blockingStub = AdminGrpc.newBlockingStub(channelBuilder.attachPasswordInterceptor(channel))
+            .withMaxInboundMessageSize(20 * 1024 * 1024)
+            .withMaxOutboundMessageSize(20 * 1024 * 1024)
 
             return GatewayStrategyGrpcImpl(blockingStub, channel, networkParameters)
         } else {
@@ -60,6 +54,12 @@ object NodeCoreGatewayFactory {
         }
 
     }
+
+
+    fun createSpv(spvContext: SpvContext): GatewayStrategy {
+        return GatewayStrategySpvImpl(spvContext)
+    }
+
 
     private fun configure(networkParameters: NetworkParameters): AdminRpcConfiguration = AdminRpcConfiguration().apply {
         isSsl = networkParameters.isSsl

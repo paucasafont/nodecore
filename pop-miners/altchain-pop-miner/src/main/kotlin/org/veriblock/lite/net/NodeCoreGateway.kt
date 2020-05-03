@@ -22,8 +22,6 @@ interface NodeCoreGateway {
 
     fun submitEndorsementTransaction(publicationData: ByteArray, addressManager: AddressManager, feePerByte: Long, maxFee: Long): VeriBlockTransaction
 
-    fun shutdown()
-
     fun getLastVBKBlockHeader(): VeriBlockBlock
 
     fun getVBKBlockHeader(blockHash: ByteArray): VeriBlockBlock
