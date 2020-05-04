@@ -27,32 +27,7 @@ object NodeCoreGatewayFactory {
             .withMaxInboundMessageSize(20 * 1024 * 1024)
             .withMaxOutboundMessageSize(20 * 1024 * 1024)
 
-            return GatewayStrategyGrpcImpl(blockingStub, channel, networkParameters)
-        } else {
-            val spvContext = SpvContext()
-            spvContext.init(
-                networkParameters.spvNetworkParameters,
-                BootstrapPeerDiscovery(networkParameters.spvNetworkParameters), false
-            )
-            spvContext.peerTable.start()
-
-            logger.info { "Initialize SPV: " }
-            while (true) {
-                val status: DownloadStatusResponse = spvContext.peerTable.downloadStatus
-                if (status.downloadStatus.isDiscovering) {
-                    logger.info { "Waiting for peers response." }
-                } else if (status.downloadStatus.isDownloading) {
-                    logger.info { "Blockchain is downloading. " + status.currentHeight + " / " + status.bestHeight }
-                } else {
-                    logger.info { "Blockchain is ready. Current height " + status.currentHeight }
-                    break
-                }
-                Thread.sleep(5000L)
-            }
-
-            return GatewayStrategySpvImpl(spvContext)
-        }
-
+        return GatewayStrategyGrpcImpl(blockingStub, channel, networkParameters)
     }
 
 
