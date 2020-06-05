@@ -8,45 +8,65 @@
 
 import ch.qos.logback.classic.filter.LevelFilter
 import ch.qos.logback.classic.filter.ThresholdFilter
+import ch.qos.logback.contrib.jackson.JacksonJsonFormatter
+import ch.qos.logback.contrib.json.classic.JsonLayout
 import ch.qos.logback.core.spi.FilterReply
 import org.veriblock.shell.LoggingLineAppender
+import org.veriblock.core.utilities.LogLevelColorsConverter
 
-def logRootPath = System.getProperty("logging.path", System.getenv('APM_LOG_PATH')) ?: 'logs/'
+def logRootPath = System.getProperty("logging.path", System.getenv('APM_LOG_PATH')) ?: 'logs'
 def logLevel = System.getProperty("logging.level", System.getenv('APM_LOG_LEVEL')) ?: ''
 def consoleLogLevel = System.getProperty("logging.level.console", System.getenv('APM_CONSOLE_LOG_LEVEL')) ?: ''
+boolean addJsonLogs = System.getenv('APM_ENABLE_JSON_LOG')?.toBoolean() ?: false
+
+statusListener(NopStatusListener)
 
 appender("TERMINAL", LoggingLineAppender) {
     filter(ThresholdFilter) {
         level = toLevel(consoleLogLevel, INFO)
     }
+    conversionRule("highlightex", LogLevelColorsConverter)
     encoder(PatternLayoutEncoder) {
-        pattern = "%d{yyyy-MM-dd HH:mm:ss} %boldWhite(%-10.-10thread) %highlight(%-5level) %gray(%-25.-25logger{0}) - %msg%n"
+        pattern = "%d{yyyy-MM-dd HH:mm:ss} %boldWhite(%-10.-10thread) %highlightex(%-5level) %gray(%-25.-25logger{0}) - %msg%n"
     }
 }
 
 appender("FILE", RollingFileAppender) {
-    file = "${logRootPath}org.veriblock.nodecore-pop.log"
+    file = "${logRootPath}/apm" + (addJsonLogs ? ".json" : ".log")
     rollingPolicy(SizeAndTimeBasedRollingPolicy) {
-        fileNamePattern = "${logRootPath}org.veriblock.nodecore-pop.%d{yyyy-MM-dd}.%i.log"
+        fileNamePattern = "${logRootPath}/apm.%d{yyyy-MM-dd}.%i" + (addJsonLogs ? ".json" : ".log")
         maxHistory = 30
         maxFileSize = "10MB"
         totalSizeCap = "1GB"
     }
-    encoder(PatternLayoutEncoder) {
-        pattern = "%date{YYYY-MM-dd HH:mm:ss.SSSXX} %level [%thread] %logger{10} [%file:%line] %msg%n"
+    if (addJsonLogs) {
+        layout(JsonLayout) {
+            jsonFormatter(JacksonJsonFormatter)
+            appendLineSeparator = true
+        }
+    } else {
+        encoder(PatternLayoutEncoder) {
+            pattern = "%date{YYYY-MM-dd HH:mm:ss.SSSXX} %level [%thread] %logger{10} [%file:%line] %msg%n"
+        }
     }
 }
 
 appender("FILE-ERROR", FileAppender) {
-    file = "${logRootPath}org.veriblock.nodecore-pop-error.log"
+    file = "${logRootPath}/apm-error" + (addJsonLogs ? ".json" : ".log")
     filter(LevelFilter) {
         level = ERROR
         onMatch = FilterReply.ACCEPT
         onMismatch = FilterReply.DENY
     }
-
-    encoder(PatternLayoutEncoder) {
-        pattern = "%date{YYYY-MM-dd HH:mm:ss.SSSXX} %level [%thread] %logger{10} [%file:%line] %msg%n"
+    if (addJsonLogs) {
+        layout(JsonLayout) {
+            jsonFormatter(JacksonJsonFormatter)
+            appendLineSeparator = true
+        }
+    } else {
+        encoder(PatternLayoutEncoder) {
+            pattern = "%date{YYYY-MM-dd HH:mm:ss.SSSXX} %level [%thread] %logger{10} [%file:%line] %msg%n"
+        }
     }
 }
 

@@ -18,8 +18,6 @@ plugins {
 }
 
 dependencies {
-    api("com.github.veriblock.alt-integration:core:0.0.7")
-
     implementation(project(":veriblock-core"))
 
     // Kotlin

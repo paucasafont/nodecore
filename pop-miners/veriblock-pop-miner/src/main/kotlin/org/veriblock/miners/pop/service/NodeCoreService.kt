@@ -15,6 +15,7 @@ import org.veriblock.core.utilities.createLogger
 import org.veriblock.miners.pop.EventBus
 import org.veriblock.miners.pop.NewVeriBlockFoundEventDto
 import org.veriblock.miners.pop.model.BlockStore
+import org.veriblock.sdk.models.SyncStatus
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.atomic.AtomicBoolean
@@ -62,7 +63,7 @@ class NodeCoreService(
     private fun poll() {
         try {
             if (isHealthy() && isSynchronized()) {
-                if (!nodeCoreGateway.isNodeCoreSynchronized()) {
+                if (!nodeCoreGateway.getNodeCoreSyncStatus().isSynchronized) {
                     synchronized.set(false)
                     logger.info("The connected node is not synchronized")
                     EventBus.nodeCoreDesynchronizedEvent.trigger()
@@ -87,8 +88,9 @@ class NodeCoreService(
                         logger.info("Connected to NodeCore")
                         EventBus.nodeCoreHealthyEvent.trigger()
                     }
+
                     healthy.set(true)
-                    if (nodeCoreGateway.isNodeCoreSynchronized()) {
+                    if (nodeCoreGateway.getNodeCoreSyncStatus().isSynchronized) {
                         if (!isSynchronized()) {
                             logger.info("The connected node is synchronized")
                             EventBus.nodeCoreSynchronizedEvent.trigger()

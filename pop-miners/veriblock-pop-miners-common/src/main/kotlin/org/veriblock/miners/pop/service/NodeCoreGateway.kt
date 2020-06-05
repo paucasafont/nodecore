@@ -23,6 +23,7 @@ import org.veriblock.miners.pop.model.PopMiningInstruction
 import org.veriblock.miners.pop.model.PopMiningTransaction
 import org.veriblock.miners.pop.model.VeriBlockHeader
 import org.veriblock.miners.pop.model.result.Result
+import org.veriblock.sdk.models.SyncStatus
 import java.util.Arrays
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
@@ -69,22 +70,26 @@ class NodeCoreGateway(
      * Verify if the connected NodeCore is synchronized with the network (the block difference between the networkHeight and the localBlockchainHeight
      * should be smaller than 4 blocks)
      *
-     * This function might return false (StatusRuntimeException) if NodeCore is not accessible or if NodeCore still loading (networkHeight = 0)
+     * This function will return an empty NodeCoreSyncStatus if NodeCore is not accessible or if NodeCore still loading (networkHeight = 0)
      */
-    fun isNodeCoreSynchronized(): Boolean {
-        return if (!::blockingStub.isInitialized) {
-            false
-        } else try {
+    fun getNodeCoreSyncStatus(): SyncStatus {
+        return try {
             val request = checkGrpcError {
                 blockingStub
                     .withDeadlineAfter(5L, TimeUnit.SECONDS)
                     .getStateInfo(VeriBlockMessages.GetStateInfoRequest.newBuilder().build())
             }
+
             val blockDifference = abs(request.networkHeight - request.localBlockchainHeight)
-            request.networkHeight > 0 && blockDifference < 4
+            SyncStatus(
+                request.networkHeight,
+                request.localBlockchainHeight,
+                blockDifference,
+                request.networkHeight > 0 && blockDifference < 4
+            )
         } catch (e: StatusRuntimeException) {
-            logger.warn("Unable to perform GetStateInfoRequest to NodeCore")
-            false
+            logger.warn("Unable to perform the GetStateInfoRequest request to NodeCore (is it reachable?)")
+            SyncStatus(0, 0, 0, false)
         }
     }
 

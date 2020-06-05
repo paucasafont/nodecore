@@ -11,7 +11,6 @@ import com.google.common.collect.Sets;
 import nodecore.cli.annotations.CommandServiceType;
 import nodecore.cli.contracts.AdminService;
 import nodecore.cli.contracts.ConnectionFailedException;
-import nodecore.cli.contracts.EndpointTransportType;
 import nodecore.cli.contracts.ProtocolEndpoint;
 import nodecore.cli.contracts.ProtocolEndpointType;
 import nodecore.cli.models.ModeType;
@@ -22,6 +21,7 @@ import org.jline.utils.AttributedStringBuilder;
 import org.jline.utils.AttributedStyle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.veriblock.core.SharedConstants;
 import org.veriblock.shell.Command;
 import org.veriblock.shell.CommandContext;
 import org.veriblock.shell.CommandFactory;
@@ -29,14 +29,9 @@ import org.veriblock.shell.Shell;
 import org.veriblock.shell.core.Result;
 import org.veriblock.shell.core.ResultMessage;
 import veriblock.SpvContext;
-import veriblock.conf.NetworkParameters;
-import veriblock.model.DownloadStatusResponse;
-import veriblock.net.BootstrapPeerDiscovery;
-import veriblock.net.PeerDiscovery;
 
 import javax.net.ssl.SSLException;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CliShell extends Shell {
@@ -267,22 +262,9 @@ public class CliShell extends Shell {
         ProtocolEndpoint endpoint = null;
         String host = null;
 
-        if (programOptions.getSpvNetworkParameters() != null) {
-            printIntroSpv();
-        } else {
-            printIntroStandard();
-        }
+        printIntroStandard();
 
-        if(programOptions.getSpvNetworkParameters() != null){
-            try {
-                endpoint = startSPV(programOptions.getSpvNetworkParameters(), new BootstrapPeerDiscovery(programOptions.getSpvNetworkParameters()));
-                host = programOptions.getSpvNetworkParameters().getAdminHost() + ":" + programOptions.getSpvNetworkParameters().getAdminPort();
-
-                disconnectCallBack = spvContext::shutdown;
-            } catch (Exception e) {
-                printResultWithFormat(handleException(e));
-            }
-        } else if(programOptions.getConnect() != null) {
+        if (programOptions.getConnect() != null) {
             host = programOptions.getConnect();
             endpoint = new ProtocolEndpoint(host, ProtocolEndpointType.RPC, null);
         }
@@ -353,36 +335,17 @@ public class CliShell extends Shell {
         t.start();
     }
 
-    public ProtocolEndpoint startSPV(NetworkParameters net, PeerDiscovery peerDiscovery) throws ExecutionException, InterruptedException {
-        this.setModeType(ModeType.SPV);
-
-        spvContext.init(net, peerDiscovery, true);
-        spvContext.getPeerTable().start();
-
-        while (true) {
-            DownloadStatusResponse status = spvContext.getPeerTable().getDownloadStatus();
-            if (status.getDownloadStatus().isDiscovering()) {
-                printInfo("Waiting for peers response.");
-            } else if (status.getDownloadStatus().isDownloading()) {
-                printInfo("Blockchain is downloading. " + status.getCurrentHeight() + " / " + status.getBestHeight());
-            } else {
-                printInfo("Blockchain is ready. Current height " + status.getCurrentHeight());
-                break;
-            }
-
-            Thread.sleep(5000L);
-        }
-
-        return new ProtocolEndpoint(net.getAdminHost(), (short) net.getAdminPort(), ProtocolEndpointType.RPC, EndpointTransportType.HTTP);
-    }
-
     private void printIntroStandard() {
         printStyled(
-            "===[ VeriBlock " + Constants.FULL_APPLICATION_NAME_VERSION + " ]===",
+            SharedConstants.VERIBLOCK_APPLICATION_NAME.replace("$1", Constants.FULL_APPLICATION_NAME_VERSION),
             AttributedStyle.BOLD.foreground(AttributedStyle.GREEN)
         );
         printStyled(
-            "\t\thttps://www.veriblock.org/\n",
+            "\t\t"+SharedConstants.VERIBLOCK_WEBSITE+"\n\n",
+            AttributedStyle.BOLD.foreground(AttributedStyle.GREEN)
+        );
+        printStyled(
+            SharedConstants.VERIBLOCK_PRODUCT_WIKI_URL.replace("$1", "https://wiki.veriblock.org/index.php/NodeCore_CommandLine") + "\n\n",
             AttributedStyle.BOLD.foreground(AttributedStyle.GREEN)
         );
         printStyled(

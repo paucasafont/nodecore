@@ -11,6 +11,7 @@
 package org.veriblock.miners.pop
 
 import org.koin.core.context.startKoin
+import org.veriblock.core.SharedConstants
 import org.veriblock.core.utilities.createLogger
 import org.veriblock.miners.pop.api.ApiServer
 import org.veriblock.miners.pop.api.webApiModule
@@ -30,6 +31,13 @@ private fun run(): Int {
         shutdownSignal.countDown()
     })
 
+    print(SharedConstants.LICENSE)
+    println(SharedConstants.VERIBLOCK_APPLICATION_NAME.replace("$1", ApplicationMeta.FULL_APPLICATION_NAME_VERSION))
+    println("\t\t${SharedConstants.VERIBLOCK_WEBSITE}")
+    println("\t\t${SharedConstants.VERIBLOCK_EXPLORER}\n")
+    println("${SharedConstants.VERIBLOCK_PRODUCT_WIKI_URL.replace("$1", "https://wiki.veriblock.org/index.php/Altchain_PoP_Miner")}\n")
+    println("${SharedConstants.TYPE_HELP}\n")
+
     logger.info { "Starting dependency injection" }
     val koin = startKoin {
         modules(listOf(minerModule, webApiModule))
@@ -41,6 +49,7 @@ private fun run(): Int {
     val apiServer: ApiServer = koin.get()
     val shell: Shell = koin.get()
 
+    var errored = false
     try {
         shell.initialize()
         pluginService.loadPlugins()
@@ -50,9 +59,12 @@ private fun run(): Int {
         apiServer.start()
         shell.run()
     } catch (e: Exception) {
+        errored = true
         logger.warn(e) { "Fatal error: ${e.message}" }
     } finally {
-        shutdownSignal.countDown()
+        if (!shell.running) {
+            shutdownSignal.countDown()
+        }
     }
 
     try {
@@ -71,7 +83,7 @@ private fun run(): Int {
         return 1
     }
 
-    return 0
+    return if (!errored) 0 else 1
 }
 
 fun main() {

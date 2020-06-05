@@ -10,13 +10,10 @@ package org.veriblock.miners.pop.service
 
 import org.veriblock.lite.proto.OperationProto
 import org.veriblock.lite.transactionmonitor.WalletTransaction
-import org.veriblock.miners.pop.core.ApmContext
-import org.veriblock.miners.pop.core.ApmMerklePath
 import org.veriblock.miners.pop.core.ApmOperation
-import org.veriblock.miners.pop.core.ApmSpBlock
 import org.veriblock.miners.pop.core.ApmSpTransaction
 import org.veriblock.miners.pop.core.OperationLog
-import org.veriblock.miners.pop.core.OperationState
+import org.veriblock.miners.pop.core.MiningOperationState
 import org.veriblock.miners.pop.securityinheriting.SecurityInheritingService
 import org.veriblock.sdk.alt.ApmInstruction
 import org.veriblock.sdk.alt.plugin.PluginService
@@ -50,15 +47,19 @@ class OperationSerializer(
             publicationBtcContext = operation.miningInstruction?.btcContext ?: emptyList(),
             txId = operation.endorsementTransaction?.txId ?: "",
             blockOfProof = operation.blockOfProof?.let {
-                SerializeDeserializeService.serializeHeaders(it.block)
+                SerializeDeserializeService.serializeHeaders(it)
             } ?: ByteArray(0),
-            merklePath = operation.merklePath?.compactFormat ?: "",
-            veriblockPublications = operation.context?.publications?.map {
+            merklePath = operation.merklePath?.toCompactString() ?: "",
+            keystoneOfProof = operation.keystoneOfProof?.let {
+                SerializeDeserializeService.serializeHeaders(it)
+            } ?: ByteArray(0),
+            veriblockPublications = operation.publicationData?.map {
                 serialize(it)
             } ?: emptyList(),
             proofOfProofId = operation.proofOfProofId ?: "",
             payoutBlockHash = operation.payoutBlockHash ?: "",
-            payoutAmount = operation.payoutAmount ?: 0L
+            payoutAmount = operation.payoutAmount ?: 0L,
+            failureReason = operation.failureReason ?: ""
         )
         return protoData
     }
@@ -89,7 +90,8 @@ class OperationSerializer(
                         deserialize(serialized.publicationData),
                         serialized.publicationContext,
                         serialized.publicationBtcContext
-                    ))
+                    )
+                )
             }
 
             if (serialized.txId.isNotEmpty()) {
@@ -102,17 +104,21 @@ class OperationSerializer(
 
             if (serialized.blockOfProof.isNotEmpty()) {
                 setConfirmed()
-                setBlockOfProof(ApmSpBlock(SerializeDeserializeService.parseVeriBlockBlock(serialized.blockOfProof)))
+                setBlockOfProof(SerializeDeserializeService.parseVeriBlockBlock(serialized.blockOfProof))
             }
 
             if (serialized.merklePath.isNotEmpty()) {
-                setMerklePath(ApmMerklePath(VeriBlockMerklePath(serialized.merklePath)))
+                setMerklePath(VeriBlockMerklePath(serialized.merklePath))
+            }
+
+            if (serialized.keystoneOfProof.isNotEmpty()) {
+                setKeystoneOfProof(SerializeDeserializeService.parseVeriBlockBlock(serialized.keystoneOfProof))
             }
 
             if (serialized.veriblockPublications.isNotEmpty()) {
-                setContext(ApmContext(serialized.veriblockPublications.map {
+                setContext(serialized.veriblockPublications.map {
                     deserialize(it)
-                }))
+                })
             }
 
             if (serialized.proofOfProofId.isNotEmpty()) {
@@ -120,11 +126,12 @@ class OperationSerializer(
             }
 
             if (serialized.payoutBlockHash.isNotEmpty()) {
-                complete(serialized.payoutBlockHash, serialized.payoutAmount)
+                setPayoutData(serialized.payoutBlockHash, serialized.payoutAmount)
+                complete()
             }
 
-            if (state == OperationState.FAILED) {
-                fail("Loaded as failed")
+            if (serialized.state == MiningOperationState.FAILED.id) {
+                fail(serialized.failureReason)
             }
 
             reconstituting = false

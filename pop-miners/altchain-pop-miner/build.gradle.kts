@@ -40,8 +40,6 @@ dependencies {
     implementation(project(":pop-miners:pop-miners-common"))
     runtimeOnly(project(":altchain-plugins"))
 
-    implementation("com.github.veriblock.alt-integration:mock-pop-mining:0.0.7")
-
     // Dependency Injection
     implementation("org.koin:koin-core:$koinVersion")
 
@@ -65,6 +63,9 @@ dependencies {
     // Logging
     implementation("io.github.microutils:kotlin-logging:1.6.26")
     implementation("ch.qos.logback:logback-classic:1.2.3")
+    implementation("ch.qos.logback.contrib:logback-json-classic:0.1.5")
+    implementation("ch.qos.logback.contrib:logback-jackson:0.1.5")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.9.3")
 
     // Protobuf Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-runtime:0.20.0")
@@ -79,11 +80,16 @@ dependencies {
     implementation("org.jetbrains.exposed:exposed-core:0.23.1")
     implementation("org.jetbrains.exposed:exposed-jdbc:0.23.1")
     implementation("com.zaxxer:HikariCP:3.3.1")
-    implementation("org.xerial:sqlite-jdbc:3.23.1")
+    implementation("org.xerial:sqlite-jdbc:$sqliteVersion")
 
     testImplementation("junit:junit:4.12")
     testImplementation("org.apache.commons:commons-lang3:3.8.1")
     testImplementation("io.kotlintest:kotlintest-assertions:3.4.1")
+
+    // Integration tests
+    testImplementation("org.testcontainers:testcontainers:1.14.1")
+    testImplementation("io.ktor:ktor-client-cio:$ktorVersion")
+    testImplementation("io.ktor:ktor-client-gson:$ktorVersion")
 }
 
 tasks.test {
@@ -104,7 +110,7 @@ tasks.named<JavaExec>("run") {
 application.applicationName = "altchain-pop-miner"
 application.mainClassName = "org.veriblock.miners.pop.AltchainPoPMiner"
 
-setupJar("VeriBlock Proof-of-Proof (PoP) Miner", "veriblock.miners.pop")
+setupJar("Altchain Proof-of-Proof (PoP) Miner", "veriblock.miners.pop")
 
 tasks.distZip {
     archiveFileName.set("${application.applicationName}-${prettyVersion()}.zip")
@@ -160,3 +166,5 @@ distributions {
         }
     }
 }
+
+customTests("integration")

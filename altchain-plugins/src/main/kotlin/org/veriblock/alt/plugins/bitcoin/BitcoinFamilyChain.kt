@@ -8,14 +8,12 @@
 
 package org.veriblock.alt.plugins.bitcoin
 
-import com.github.kittinunf.fuel.core.Request
-import com.github.kittinunf.fuel.core.extensions.authentication
-import com.github.kittinunf.fuel.httpPost
+import io.ktor.http.ContentType
 import org.bouncycastle.util.Arrays
-import org.veriblock.alt.plugins.util.JsonRpcRequestBody
+import org.veriblock.alt.plugins.HttpSecurityInheritingChain
+import org.veriblock.alt.plugins.createHttpClient
+import org.veriblock.alt.plugins.rpcRequest
 import org.veriblock.alt.plugins.util.RpcException
-import org.veriblock.alt.plugins.util.rpcResponse
-import org.veriblock.alt.plugins.util.toJson
 import org.veriblock.core.altchain.AltchainPoPEndorsement
 import org.veriblock.core.contracts.BlockEndorsement
 import org.veriblock.core.crypto.Crypto
@@ -25,7 +23,6 @@ import org.veriblock.core.utilities.extensions.flip
 import org.veriblock.core.utilities.extensions.isHex
 import org.veriblock.core.utilities.extensions.toHex
 import org.veriblock.sdk.alt.ApmInstruction
-import org.veriblock.sdk.alt.SecurityInheritingChain
 import org.veriblock.sdk.alt.model.SecurityInheritingBlock
 import org.veriblock.sdk.alt.model.SecurityInheritingTransaction
 import org.veriblock.sdk.alt.model.SecurityInheritingTransactionVout
@@ -33,9 +30,13 @@ import org.veriblock.sdk.alt.plugin.PluginConfig
 import org.veriblock.sdk.alt.plugin.PluginSpec
 import org.veriblock.sdk.models.AltPublication
 import org.veriblock.sdk.models.PublicationData
+import org.veriblock.sdk.models.SyncStatus
 import org.veriblock.sdk.models.VeriBlockPublication
 import org.veriblock.sdk.services.SerializeDeserializeService
+import java.io.File
 import java.nio.ByteBuffer
+import kotlin.math.abs
+import kotlin.math.roundToLong
 
 private val logger = createLogger {}
 
@@ -43,7 +44,7 @@ private val logger = createLogger {}
 class BitcoinFamilyChain(
     override val key: String,
     configuration: PluginConfig
-) : SecurityInheritingChain {
+) : HttpSecurityInheritingChain {
 
     override val config = BitcoinConfig(configuration)
 
@@ -54,6 +55,15 @@ class BitcoinFamilyChain(
         ?: error("Failed to load altchain plugin $key: please configure the chain 'name'!")
 
     private val payoutAddressScript: ByteArray
+
+    override val httpClient = createHttpClient(
+        authConfig = config.auth,
+        contentTypes = listOf(ContentType.Application.Json, ContentType.Text.Any),
+        connectionTimeout = config.daemonConnectionTimeout
+    )
+
+    override val requestLogsPath: String?
+        get() = config.requestLogsPath
 
     init {
         config.checkValidity()
@@ -69,31 +79,21 @@ class BitcoinFamilyChain(
                 error("Invalid segwit address: ${e.message}")
             }
         }
+
+        if (requestLogsPath != null) {
+            File(requestLogsPath).mkdirs()
+        }
     }
 
-    private fun Request.authenticate() = if (config.username != null && config.password != null) {
-        authentication().basic(config.username, config.password)
-    } else {
-        this
-    }
-
-    override fun getBestBlockHeight(): Int {
+    override suspend fun getBestBlockHeight(): Int {
         logger.debug { "Retrieving best block height..." }
-        val jsonBody = JsonRpcRequestBody("getblockcount").toJson()
-        return config.host.httpPost()
-            .authenticate()
-            .body(jsonBody)
-            .rpcResponse()
+        return rpcRequest("getblockcount")
     }
 
-    override fun getBlock(hash: String): SecurityInheritingBlock? {
+    override suspend fun getBlock(hash: String): SecurityInheritingBlock? {
         logger.debug { "Retrieving block $hash..." }
-        val jsonBody = JsonRpcRequestBody("getblock", listOf(hash, 1)).toJson()
         val btcBlock: BtcBlock = try {
-            config.host.httpPost()
-                .authenticate()
-                .body(jsonBody)
-                .rpcResponse()
+            rpcRequest("getblock", listOf(hash, 1))
         } catch (e: RpcException) {
             if (e.errorCode == -5) {
                 // Block not found
@@ -116,14 +116,10 @@ class BitcoinFamilyChain(
         )
     }
 
-    private fun getBlockHash(height: Int): String? {
+    private suspend fun getBlockHash(height: Int): String? {
         logger.debug { "Retrieving block hash @$height..." }
-        val jsonBody = JsonRpcRequestBody("getblockhash", listOf(height)).toJson()
         return try {
-            config.host.httpPost()
-                .authenticate()
-                .body(jsonBody)
-                .rpcResponse()
+            rpcRequest("getblockhash", listOf(height))
         } catch (e: RpcException) {
             if (e.errorCode == -8) {
                 // Block height out of range
@@ -134,24 +130,20 @@ class BitcoinFamilyChain(
         }
     }
 
-    override fun getBlock(height: Int): SecurityInheritingBlock? {
+    override suspend fun getBlock(height: Int): SecurityInheritingBlock? {
         logger.debug { "Retrieving block @$height..." }
         val blockHash = getBlockHash(height)
             ?: return null
         return getBlock(blockHash)
     }
 
-    override fun checkBlockIsOnMainChain(height: Int, blockHeaderToCheck: ByteArray): Boolean {
+    override suspend fun checkBlockIsOnMainChain(height: Int, blockHeaderToCheck: ByteArray): Boolean {
         logger.debug { "Checking block @$height has header ${blockHeaderToCheck.toHex()}..." }
         val blockHash = getBlockHash(height)
             ?: return false
         // Get raw block
-        val jsonBody = JsonRpcRequestBody("getblock", listOf(blockHash, 0)).toJson()
         val rawBlock: String = try {
-            config.host.httpPost()
-                .authenticate()
-                .body(jsonBody)
-                .rpcResponse()
+            rpcRequest("getblock", listOf(blockHash, 0))
         } catch (e: RpcException) {
             if (e.errorCode == -5) {
                 // Block not found
@@ -166,17 +158,13 @@ class BitcoinFamilyChain(
         return header.contentEquals(blockHeaderToCheck)
     }
 
-    override fun getTransaction(txId: String): SecurityInheritingTransaction? {
+    override suspend fun getTransaction(txId: String): SecurityInheritingTransaction? {
         logger.debug { "Retrieving transaction $txId..." }
-        val jsonBody = JsonRpcRequestBody("getrawtransaction", listOf(txId, 1)).toJson()
         val btcTransaction: BtcTransaction = try {
-            config.host.httpPost()
-                .authenticate()
-                .body(jsonBody)
-                .rpcResponse()
+            rpcRequest("getrawtransaction", listOf(txId, 1))
         } catch (e: RpcException) {
             if (e.errorCode == -5) {
-                // Block not found
+                // Transaction not found
                 return null
             } else {
                 throw e
@@ -187,7 +175,7 @@ class BitcoinFamilyChain(
             btcTransaction.confirmations,
             btcTransaction.vout.map {
                 SecurityInheritingTransactionVout(
-                    Math.round(it.value * 100000000),
+                    (it.value * 100000000).roundToLong(),
                     it.scriptPubKey.hex
                 )
             }
@@ -195,20 +183,16 @@ class BitcoinFamilyChain(
     }
 
     override fun getPayoutInterval(): Int {
-        return 501
+        return config.payoutInterval
     }
 
-    override fun getMiningInstruction(blockHeight: Int?): ApmInstruction {
+    override suspend fun getMiningInstruction(blockHeight: Int?): ApmInstruction {
         val actualBlockHeight = blockHeight
         // Retrieve top block height from API if not supplied
             ?: getBestBlockHeight()
 
         logger.info { "Retrieving mining instruction at height $actualBlockHeight from $name daemon at ${config.host}..." }
-        val jsonBody = JsonRpcRequestBody("getpopdata", listOf(actualBlockHeight)).toJson()
-        val response: BtcPublicationData = config.host.httpPost()
-            .authenticate()
-            .body(jsonBody)
-            .rpcResponse()
+        val response: BtcPublicationData = rpcRequest("getpopdata", listOf(actualBlockHeight))
 
         val publicationData = PublicationData(
             id,
@@ -227,71 +211,18 @@ class BitcoinFamilyChain(
         )
     }
 
-    override fun submit(proofOfProof: AltPublication, veriBlockPublications: List<VeriBlockPublication>): String {
-        if (veriBlockPublications.calculateSize() >= 100_000) {
-            updateContext(veriBlockPublications.take(veriBlockPublications.size - 1))
-            return submit(proofOfProof, veriBlockPublications.takeLast(1))
-        }
-
+    override suspend fun submit(proofOfProof: AltPublication, veriBlockPublications: List<VeriBlockPublication>): String {
         logger.info { "Submitting PoP and VeriBlock publications to $name daemon at ${config.host}..." }
-
-        val jsonBody = JsonRpcRequestBody("submitpop", listOf(
+        return rpcRequest("submitpop", listOf(
             SerializeDeserializeService.serialize(proofOfProof).toHex(),
             veriBlockPublications.map { SerializeDeserializeService.serialize(it).toHex() }
-        )).toJson()
-
-        return config.host.httpPost()
-            .authenticate()
-            .body(jsonBody)
-            .rpcResponse()
+        ))
     }
 
-    override fun updateContext(veriBlockPublications: List<VeriBlockPublication>): String {
-        if (veriBlockPublications.calculateSize() < 100_000) {
-            return updateContextInternal(veriBlockPublications)
-        } else {
-            val toEmpty = ArrayList(veriBlockPublications)
-            var lastResponse = ""
-            while (toEmpty.isNotEmpty()) {
-                val publications = ArrayList<VeriBlockPublication>()
-                while (toEmpty.isNotEmpty() && publications.calculateSize() + toEmpty.first().calculateSize() < 100_000) {
-                    publications.add(toEmpty.removeAt(0))
-                }
-                if (publications.isEmpty() && toEmpty.isNotEmpty()) {
-                    error("Too big publication: ${toEmpty.first().calculateSize()} bytes")
-                }
-                lastResponse = updateContextInternal(publications)
-            }
-            return lastResponse
-        }
+    override fun extractAddressDisplay(addressData: ByteArray): String {
+        // TODO: extract correctly from param, use BitcoinJ maybe?
+        return config.payoutAddress ?: "UNKNOWN_ADDRESS"
     }
-
-    private fun updateContextInternal(veriBlockPublications: List<VeriBlockPublication>): String {
-        logger.info { "Submitting PoP and VeriBlock publications to $name daemon at ${config.host}..." }
-        val jsonBody = JsonRpcRequestBody("updatecontext", listOf(
-            veriBlockPublications.map {
-                it.transaction
-            }.flatMap {
-                it.blocks
-            }.map {
-                SerializeDeserializeService.getHeaderBytesBitcoinBlock(it).toHex()
-            },
-            veriBlockPublications.flatMap {
-                it.blocks
-            }.map {
-                SerializeDeserializeService.serializeHeaders(it).toHex()
-            }
-        )).toJson()
-
-        return config.host.httpPost()
-            .authenticate()
-            .body(jsonBody)
-            .rpcResponse()
-    }
-
-    private fun List<VeriBlockPublication>.calculateSize() = 1 + sumBy { it.calculateSize() }
-
-    private fun VeriBlockPublication.calculateSize() = transaction.blocks.size * 81 + blocks.size * 65
 
     private val crypto = Crypto()
 
@@ -306,32 +237,29 @@ class BitcoinFamilyChain(
         return BlockEndorsement(height, hash, previousHash, previousKeystone, secondPreviousKeystone)
     }
 
-    override fun isConnected(): Boolean {
-        val jsonBody = JsonRpcRequestBody("getblockcount").toJson()
-        return try{
-            config.host.httpPost()
-                .authenticate()
-                .body(jsonBody)
-                .rpcResponse<String>()
+    override suspend fun isConnected(): Boolean {
+        return try {
+            rpcRequest<String>("getblockcount")
             true
         } catch (e: Exception) {
             false
         }
     }
 
-    override fun isSynchronized(): Boolean {
-        val jsonBody = JsonRpcRequestBody("getblockchaininfo").toJson()
-        val response: BtcSyncStatus = try {
-            config.host.httpPost()
-                .authenticate()
-                .body(jsonBody)
-                .rpcResponse()
+    override suspend fun getSynchronizedStatus(): SyncStatus {
+        return try {
+            val response: BtcSyncStatus = rpcRequest("getblockchaininfo")
+            val blockDifference = abs(response.headers - response.blocks)
+            SyncStatus(
+                response.headers,
+                response.blocks,
+                blockDifference,
+                response.headers > 0 && blockDifference < 4
+            )
         } catch (e: Exception) {
-            logger.info { "Unable to perform the 'getblockchaininfo' rpc call: ${e.message}" }
-            return false
+            logger.warn { "Unable to perform the getblockchaininfo rpc call to ${config.host} (is it reachable?)" }
+            SyncStatus(0, 0, 0, false)
         }
-        val blockDifference = response.headers - response.blocks
-        return blockDifference < 4
     }
 }
 

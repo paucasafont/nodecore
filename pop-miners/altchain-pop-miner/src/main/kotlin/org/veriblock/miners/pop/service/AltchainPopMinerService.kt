@@ -13,6 +13,9 @@ package org.veriblock.miners.pop.service
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.veriblock.core.CommunicationException
+import org.veriblock.core.MineException
 import org.veriblock.core.utilities.createLogger
 import org.veriblock.lite.NodeCoreLiteKit
 import org.veriblock.lite.core.Balance
@@ -24,10 +27,7 @@ import org.veriblock.miners.pop.securityinheriting.SecurityInheritingService
 import org.veriblock.miners.pop.util.formatCoinAmount
 import org.veriblock.sdk.alt.plugin.PluginService
 import org.veriblock.sdk.models.Coin
-import org.veriblock.sdk.models.Sha256Hash
-import org.veriblock.shell.core.Result
-import org.veriblock.shell.core.failure
-import org.veriblock.shell.core.success
+import org.veriblock.core.crypto.Sha256Hash
 import java.io.IOException
 import java.util.EnumSet
 import java.util.concurrent.ConcurrentHashMap
@@ -119,14 +119,17 @@ class AltchainPopMinerService(
 
     private fun ReadyCondition.getNotReadyMessage() = when (this) {
         ReadyCondition.NODECORE_CONNECTED -> "Waiting for connection to NodeCore"
-        ReadyCondition.SYNCHRONIZED_NODECORE -> "Waiting for NodeCore to synchronize"
+        ReadyCondition.SYNCHRONIZED_NODECORE -> {
+           val nodeCoreSyncStatus = nodeCoreLiteKit.network.getNodeCoreSyncStatus()
+            "Waiting for NodeCore to synchronize. ${nodeCoreSyncStatus.blockDifference} blocks left (LocalHeight=${nodeCoreSyncStatus.localBlockchainHeight} NetworkHeight=${nodeCoreSyncStatus.networkHeight})"
+        }
         ReadyCondition.SUFFICIENT_FUNDS -> {
             val currentBalance = getBalance()?.confirmedBalance ?: Coin.ZERO
             """
                 PoP wallet does not contain sufficient funds
                          Current balance: ${currentBalance.atomicUnits.formatCoinAmount()} ${context.vbkTokenName}
                          Minimum required: ${config.maxFee.formatCoinAmount()}, need ${(config.maxFee - currentBalance.atomicUnits).formatCoinAmount()} more
-                         Send VBK coins to: ${nodeCoreLiteKit.addressManager.defaultAddress.hash}
+                         Send ${context.vbkTokenName} coins to: ${nodeCoreLiteKit.addressManager.defaultAddress.hash}
             """.trimIndent()
         }
     }
@@ -147,7 +150,10 @@ class AltchainPopMinerService(
     override fun getOperations() = operations.values.sortedBy { it.createdAt }
 
     override fun getOperation(id: String): ApmOperation? {
-        return operations[id]
+        return operations[id] ?: operationService.getOperation(id) { txId ->
+            val hash = Sha256Hash.wrap(txId)
+            nodeCoreLiteKit.transactionMonitor.getTransaction(hash)
+        }
     }
 
     override fun getAddress(): String = nodeCoreLiteKit.getAddress()
@@ -158,41 +164,32 @@ class AltchainPopMinerService(
         null
     }
 
-    override fun mine(chainId: String, block: Int?): Result {
+    override fun sendCoins(destinationAddress: String, atomicAmount: Long): List<String> = if (nodeCoreLiteKit.network.isHealthy()) {
+        nodeCoreLiteKit.network.sendCoins(destinationAddress, atomicAmount)
+    } else {
+        throw CommunicationException("NodeCore is not healthy")
+    }
+
+    override fun mine(chainId: String, block: Int?): String {
         val chain = pluginService[chainId]
-        if (chain == null) {
-            logger.warn { "Unable to load plugin $chainId" }
-            return failure()
-        }
+            ?: throw MineException("Unable to find altchain plugin '$chainId'")
 
         if (!isReady()) {
-            return failure {
-                addMessage(
-                    "V412",
-                    "Miner is not ready",
-                    listNotReadyConditions(),
-                    true
-                )
-            }
+            throw MineException("Miner is not ready: ${listNotReadyConditions()}")
         }
         if (!nodeCoreLiteKit.network.isHealthy()) {
-            return failure {
-                addMessage("V010", "Unable to mine", "Cannot connect to NodeCore", true)
-            }
+            throw CommunicationException("Cannot connect to NodeCore")
         }
         if (isShuttingDown) {
-            return failure {
-                addMessage("V412", "Miner is not ready", "The miner is currently shutting down", true)
-            }
+            throw MineException("The miner is currently shutting down")
         }
-        if (!chain.isConnected()) {
-            return failure {
-                addMessage("V412", "Miner is not ready", "The miner is not connected to the ${chain.name} chain", true)
+        runBlocking {
+            if (!chain.isConnected()) {
+                throw MineException("The miner is not connected to the ${chain.name} chain")
             }
-        }
-        if (!chain.isSynchronized()) {
-            return failure {
-                addMessage("V412", "Miner is not ready", "The chain ${chain.name} is not synchronized", true)
+            val chainSyncStatus = chain.getSynchronizedStatus()
+            if (!chainSyncStatus.isSynchronized) {
+                throw MineException("The chain ${chain.name} is not synchronized, ${chainSyncStatus.blockDifference} blocks left (LocalHeight=${chainSyncStatus.localBlockchainHeight} NetworkHeight=${chainSyncStatus.networkHeight})")
             }
         }
 
@@ -207,18 +204,17 @@ class AltchainPopMinerService(
 
         registerToStateChangedEvent(operation)
 
+        operation.state
         submit(operation)
         operations[operation.id] = operation
 
         logger.info { "Created operation [${operation.id}] on chain ${operation.chain.name}" }
 
-        return success {
-            addMessage("v000", operation.id, "")
-        }
+        return operation.id
     }
 
     override fun resubmit(operation: ApmOperation) {
-        if (operation.context == null) {
+        if (operation.publicationData == null) {
             error("The operation [${operation.id}] has no context to be resubmitted!")
         }
 
@@ -236,7 +232,7 @@ class AltchainPopMinerService(
         newOperation.setConfirmed()
         newOperation.setBlockOfProof(operation.blockOfProof!!)
         newOperation.setMerklePath(operation.merklePath!!)
-        newOperation.setContext(operation.context!!)
+        newOperation.setContext(operation.publicationData!!)
         newOperation.reconstituting = false
 
         registerToStateChangedEvent(newOperation)

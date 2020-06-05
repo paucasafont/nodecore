@@ -8,9 +8,11 @@
 
 package org.veriblock.alt.plugins.test
 
-import com.github.kittinunf.fuel.httpPost
+import io.ktor.client.request.post
+import org.veriblock.alt.plugins.createHttpClient
 import org.veriblock.alt.plugins.util.JsonRpcRequestBody
-import org.veriblock.alt.plugins.util.rpcResponse
+import org.veriblock.alt.plugins.util.RpcResponse
+import org.veriblock.alt.plugins.util.handle
 import org.veriblock.alt.plugins.util.toJson
 import org.veriblock.core.altchain.AltchainPoPEndorsement
 import org.veriblock.core.contracts.BlockEndorsement
@@ -28,6 +30,7 @@ import org.veriblock.sdk.alt.plugin.PluginConfig
 import org.veriblock.sdk.alt.plugin.PluginSpec
 import org.veriblock.sdk.models.AltPublication
 import org.veriblock.sdk.models.PublicationData
+import org.veriblock.sdk.models.SyncStatus
 import org.veriblock.sdk.models.VeriBlockPublication
 import org.veriblock.sdk.services.SerializeDeserializeService
 import java.util.TreeMap
@@ -52,21 +55,19 @@ class TestChain(
 
     private val startingHeight = (System.currentTimeMillis() / 10000).toInt() - 20
 
+    private val httpClient = createHttpClient()
+
     init {
         config.checkValidity()
     }
 
-    //private fun getInfo(): VbkInfo = config.host.httpPost()
-    //    .body(JsonRpcRequestBody("getinfo", Any()).toJson())
-    //    .rpcResponse()
+    private suspend fun getLastBitcoinBlockHash() = httpClient.post<RpcResponse>(config.host) {
+        body = JsonRpcRequestBody("getlastbitcoinblock", Any()).toJson()
+    }.handle<BtcBlockData>().hash
 
-    private fun getLastBitcoinBlockHash() = config.host.httpPost()
-        .body(JsonRpcRequestBody("getlastbitcoinblock", Any()).toJson())
-        .rpcResponse<BtcBlockData>().hash
-
-    private fun getLastBlockHash() = config.host.httpPost()
-        .body(JsonRpcRequestBody("getlastblock", Any()).toJson())
-        .rpcResponse<BlockHeaderContainer>().header.hash
+    private suspend fun getLastBlockHash() = httpClient.post<RpcResponse>(config.host) {
+        body = JsonRpcRequestBody("getlastblock", Any()).toJson()
+    }.handle<BlockHeaderContainer>().header.hash
 
     override fun shouldAutoMine(): Boolean {
         return config.autoMinePeriod != null
@@ -76,7 +77,7 @@ class TestChain(
         return config.autoMinePeriod != null && blockHeight % config.autoMinePeriod == 0
     }
 
-    override fun getBestBlockHeight(): Int {
+    override suspend fun getBestBlockHeight(): Int {
         val expectedHeight = (System.currentTimeMillis() / 10000).toInt()
         // "New block" every 10 seconds
         if (blocks.isEmpty() || blocks.lastKey() < expectedHeight) {
@@ -85,11 +86,11 @@ class TestChain(
         return expectedHeight
     }
 
-    override fun getBlock(hash: String): SecurityInheritingBlock? {
+    override suspend fun getBlock(hash: String): SecurityInheritingBlock? {
         return blocks.values.find { it.data.hash == hash }?.data
     }
 
-    override fun getBlock(height: Int): SecurityInheritingBlock? {
+    override suspend fun getBlock(height: Int): SecurityInheritingBlock? {
         if (height > getBestBlockHeight()) {
             return null
         }
@@ -98,22 +99,22 @@ class TestChain(
         }.data
     }
 
-    override fun checkBlockIsOnMainChain(height: Int, blockHeaderToCheck: ByteArray): Boolean {
+    override suspend fun checkBlockIsOnMainChain(height: Int, blockHeaderToCheck: ByteArray): Boolean {
         val block = blocks[height]
             ?: return false
 
         return blockHeaderToCheck.toHex().contains(block.data.hash)
     }
 
-    override fun getTransaction(txId: String): SecurityInheritingTransaction? {
+    override suspend fun getTransaction(txId: String): SecurityInheritingTransaction? {
         return transactions[txId]
     }
 
     override fun getPayoutInterval(): Int {
-        return 100
+        return config.payoutInterval
     }
 
-    override fun getMiningInstruction(blockHeight: Int?): ApmInstruction {
+    override suspend fun getMiningInstruction(blockHeight: Int?): ApmInstruction {
         logger.debug { "Retrieving last known blocks from NodeCore at ${config.host}..." }
         val lastVbkHash = getLastBlockHash().asHexBytes()
         val lastBtcHash = getLastBitcoinBlockHash().asHexBytes()
@@ -138,7 +139,7 @@ class TestChain(
         return ApmInstruction(finalBlockHeight, publicationData, listOf(lastVbkHash), listOf(lastBtcHash))
     }
 
-    override fun submit(proofOfProof: AltPublication, veriBlockPublications: List<VeriBlockPublication>): String {
+    override suspend fun submit(proofOfProof: AltPublication, veriBlockPublications: List<VeriBlockPublication>): String {
         val publicationData = proofOfProof.transaction.publicationData
         val publicationDataHeader = publicationData.header.toHex()
         val publicationDataContextInfo = publicationData.contextInfo.toHex()
@@ -151,23 +152,8 @@ class TestChain(
         return block.data.coinbaseTransactionId
     }
 
-    override fun updateContext(veriBlockPublications: List<VeriBlockPublication>): String {
-        logger.info {
-            """Update context called with the following data:
-            |ATVs: ${veriBlockPublications.map {
-                it.transaction
-            }.flatMap {
-                it.blocks
-            }.map {
-                SerializeDeserializeService.getHeaderBytesBitcoinBlock(it).toHex()
-            }}
-            |VTBs: ${veriBlockPublications.flatMap {
-                it.blocks
-            }.map {
-                SerializeDeserializeService.serializeHeaders(it).toHex()
-            }}""".trimMargin()
-        }
-        return ""
+    override fun extractAddressDisplay(addressData: ByteArray): String {
+        return String(addressData)
     }
 
     override fun extractBlockEndorsement(altchainPopEndorsement: AltchainPoPEndorsement): BlockEndorsement {
@@ -245,17 +231,18 @@ class TestChain(
         return transaction
     }
 
-    override fun isConnected(): Boolean {
+    override suspend fun isConnected(): Boolean {
         return try {
             getLastBitcoinBlockHash()
             true
-        } catch(e: Exception) {
+        } catch (e: Exception) {
             false
         }
     }
 
-    override fun isSynchronized(): Boolean = true
+    override suspend fun getSynchronizedStatus(): SyncStatus = SyncStatus(50, 50, 0, true)
 }
+
 
 private class TestBlock(
     val data: SecurityInheritingBlock,

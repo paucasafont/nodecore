@@ -23,9 +23,11 @@ import org.jline.utils.AttributedStringBuilder
 import org.jline.utils.AttributedStyle
 import org.jline.utils.InfoCmp
 import org.slf4j.LoggerFactory
+import org.veriblock.core.VeriBlockException
 import org.veriblock.core.utilities.DiagnosticUtility
 import org.veriblock.shell.core.ActivityLevel
 import org.veriblock.shell.core.Result
+import org.veriblock.shell.core.ResultMessage
 import org.veriblock.shell.core.failure
 import java.text.SimpleDateFormat
 import java.util.ArrayList
@@ -41,7 +43,8 @@ open class Shell(
 ) {
     private val dateFormatter: SimpleDateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 
-    private var running = false
+    var running = false
+        private set
 
     private val terminal: Terminal = TerminalBuilder.builder().apply {
         if (testData != null) {
@@ -143,6 +146,10 @@ open class Shell(
                     se.messages.forEach {
                         addMessage(it)
                     }
+                }
+            } catch (ve: VeriBlockException) {
+                failure {
+                    addMessage(ResultMessage("V${ve.error.code}", ve.error.title, listOf(ve.message)))
                 }
             } catch (e: Exception) {
                 handleException(e)

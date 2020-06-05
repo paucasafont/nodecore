@@ -7,11 +7,11 @@ import nodecore.cli.contracts.PeerEndpoint
 import nodecore.cli.contracts.ProtocolEndpoint
 import nodecore.cli.contracts.ProtocolEndpointType
 import nodecore.cli.models.ModeType
+import org.veriblock.core.params.NetworkParameters
 import org.veriblock.shell.CommandFactory
 import org.veriblock.shell.CommandParameter
 import org.veriblock.shell.CommandParameterMappers
 import org.veriblock.shell.core.success
-import veriblock.conf.NetworkParameters
 import veriblock.net.BootstrapPeerDiscovery
 import veriblock.net.LocalhostDiscovery
 import veriblock.net.PeerDiscovery
@@ -44,37 +44,6 @@ fun CommandFactory.connectionCommands() {
 
         this.extraData["connect"] = endpoint
         shell.modeType = ModeType.STANDARD
-
-        success()
-    }
-
-
-    cliCommand(
-        name = "Connect SPV",
-        form = "startspv",
-        description = "Connect to a NodeCore RPC endpoint in the spv mode. Note: NodeCore does not begin listening for RPC " +
-            "connections until after loading the blockchain, which may take several minutes.",
-        parameters = listOf(
-            CommandParameter(name = "mainnet/testnet/alphanet", mapper = ShellCommandParameterMappers.NET, required = true),
-            CommandParameter(name = "peer", mapper = CommandParameterMappers.STRING, required = false)
-        ),
-        suggestedCommands = {
-            listOf("getbalance", "send")
-        }
-    ) {
-        val shell = cliShell
-        val net: NetworkParameters = getParameter("mainnet/testnet/alphanet")
-        val peer: String? = getOptionalParameter("peer")
-
-        // Work with bootstraps peers by default.
-        val peerDiscovery: PeerDiscovery = if (peer == "local") LocalhostDiscovery(net) else BootstrapPeerDiscovery(net)
-
-        val endpoint = shell.startSPV(net, peerDiscovery)
-
-        this.extraData["connect"] = endpoint
-        this.extraData["disconnectCallBack"] = Runnable {
-            shell.spvContext.shutdown()
-        }
 
         success()
     }

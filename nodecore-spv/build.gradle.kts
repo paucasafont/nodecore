@@ -28,12 +28,10 @@ dependencies {
     implementation(project(":nodecore-grpc"))
     implementation(project(":nodecore-p2p"))
 
-    implementation("com.github.veriblock.alt-integration:core:0.0.7")
-
     runtime("org.codehaus.groovy:groovy:2.4.12")
 
     compile("ch.qos.logback:logback-classic:1.2.3")
-    compile("org.xerial:sqlite-jdbc:3.28.0")
+    compile("org.xerial:sqlite-jdbc:$sqliteVersion")
     compile("com.sparkjava:spark-core:2.8.0")
 
     compile("com.google.protobuf:protobuf-java:3.6.1")
@@ -47,6 +45,7 @@ dependencies {
     testImplementation("junit:junit:4.12")
     // required if you want to use Mockito for unit tests
     testCompile("org.mockito:mockito-core:2.7.22")
+    testImplementation("io.mockk:mockk:1.9.3")
 }
 
 protobuf {

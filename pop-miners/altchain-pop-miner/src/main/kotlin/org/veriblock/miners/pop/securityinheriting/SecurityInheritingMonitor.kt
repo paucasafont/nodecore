@@ -9,22 +9,28 @@
 package org.veriblock.miners.pop.securityinheriting
 
 import com.google.common.util.concurrent.SettableFuture
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.BroadcastChannel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.Channel.Factory.CONFLATED
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import org.veriblock.core.utilities.Configuration
 import org.veriblock.core.utilities.createLogger
 import org.veriblock.core.utilities.debugWarn
 import org.veriblock.lite.util.Threading
 import org.veriblock.miners.pop.service.MinerService
+import org.veriblock.miners.pop.service.sec
 import org.veriblock.sdk.alt.SecurityInheritingChain
 import org.veriblock.sdk.alt.model.SecurityInheritingBlock
 import org.veriblock.sdk.alt.model.SecurityInheritingTransaction
 import org.veriblock.sdk.util.checkSuccess
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -36,7 +42,9 @@ class SecurityInheritingMonitor(
     private val chainId: String,
     private val chain: SecurityInheritingChain
 ) {
-    private val pollingPeriodSeconds = configuration.getLong("securityInheriting.$chainId.pollingPeriodSeconds") ?: 20L
+    private val pollingPeriodSeconds = configuration.getLong(
+        "securityInheriting.$chainId.pollingPeriodSeconds"
+    ) ?: 20L
 
     private val lock = ReentrantLock()
 
@@ -47,21 +55,25 @@ class SecurityInheritingMonitor(
 
     private var bestBlockHeight: Int = -1
 
-    private var pollSchedule: ScheduledFuture<*>? = null
+    private var pollSchedule: Job? = null
 
     val newBlockHeightBroadcastChannel = BroadcastChannel<Int>(CONFLATED)
 
-    private val blockHeightListeners = HashMap<Int, MutableList<Channel<SecurityInheritingBlock>>>()
-    private val transactionListeners = HashMap<String, MutableList<Channel<SecurityInheritingTransaction>>>()
+    private val blockHeightListeners = ConcurrentHashMap<Int, MutableList<Channel<SecurityInheritingBlock>>>()
+    private val transactionListeners = ConcurrentHashMap<String, MutableList<Channel<SecurityInheritingTransaction>>>()
 
     /**
      * Starts monitoring the corresponding chain with a polling schedule
      */
     fun start(miner: MinerService) {
         this.miner = miner
-        pollSchedule = Threading.SI_POLL_THREAD.scheduleWithFixedDelay({
-            poll()
-        }, 5L, pollingPeriodSeconds, TimeUnit.SECONDS)
+        pollSchedule = CoroutineScope(Threading.SI_POLL_THREAD.asCoroutineDispatcher()).launch {
+            delay(5_000L)
+            while (true) {
+                poll()
+                delay(pollingPeriodSeconds * 1000)
+            }
+        }
 
         logger.info("Connecting to SI Chain ($chainId)...")
         connected.addListener(Runnable {
@@ -73,7 +85,7 @@ class SecurityInheritingMonitor(
      * Stops the polling schedule
      */
     fun stop() {
-        pollSchedule?.cancel(false)
+        pollSchedule?.cancel()
         pollSchedule = null
     }
 
@@ -81,13 +93,13 @@ class SecurityInheritingMonitor(
      * Checks for the best chain's block height. If it changed, it handles all registered listeners.
      * Automining is also triggered here.
      */
-    private fun poll() {
+    private suspend fun poll() {
         try {
             if (healthy.get()) {
                 val bestBlockHeight: Int = try {
                     chain.getBestBlockHeight()
                 } catch (e: Exception) {
-                    logger.debugWarn(e) { "Error while retrieving ${chain.name} tip height: $e" }
+                    logger.debugWarn(e) { "Error while retrieving ${chain.name} tip height" }
                     healthy.set(false)
                     return
                 }
@@ -116,7 +128,7 @@ class SecurityInheritingMonitor(
         }
     }
 
-    private fun getBlockAtHeight(height: Int): SecurityInheritingBlock? {
+    private suspend fun getBlockAtHeight(height: Int): SecurityInheritingBlock? {
         // Ignore if we didn't still reach the registered height yet
         if (height > bestBlockHeight) {
             return null
@@ -133,15 +145,15 @@ class SecurityInheritingMonitor(
             ?: throw IllegalStateException("Unable to find block with height $height while the best chain height is $bestBlockHeight!")
     }
 
-    private fun getTransaction(txId: String): SecurityInheritingTransaction? = try {
+    private suspend fun getTransaction(txId: String): SecurityInheritingTransaction? = try {
         // Retrieve block from SI chain
         chain.getTransaction(txId)
     } catch (e: Exception) {
-        logger.warn(e) { "Error when polling for transaction $txId" }
+        logger.debugWarn(e) { "Error when polling for transaction $txId" }
         null
     }
 
-    private fun handleBlockHeightListeners() = lock.withLock {
+    private suspend fun handleBlockHeightListeners() {
         for ((height, listeners) in blockHeightListeners) {
             val block = getBlockAtHeight(height)
             if (block != null) {
@@ -152,7 +164,7 @@ class SecurityInheritingMonitor(
         }
     }
 
-    private fun handleTransactionListeners() = lock.withLock {
+    private suspend fun handleTransactionListeners() {
         for ((txId, listeners) in transactionListeners) {
             val transaction = getTransaction(txId)
             if (transaction != null) {
@@ -163,7 +175,7 @@ class SecurityInheritingMonitor(
         }
     }
 
-    suspend fun getBlockAtHeight(height: Int, predicate: (SecurityInheritingBlock) -> Boolean): SecurityInheritingBlock {
+    suspend fun getBlockAtHeight(height: Int, predicate: (SecurityInheritingBlock) -> Boolean = { true }): SecurityInheritingBlock {
         // Check if we can skip the subscription
         val block = getBlockAtHeight(height)
         if (block != null && predicate(block)) {
@@ -176,7 +188,7 @@ class SecurityInheritingMonitor(
         }
     }
 
-    suspend fun getTransaction(txId: String, predicate: (SecurityInheritingTransaction) -> Boolean): SecurityInheritingTransaction {
+    suspend fun getTransaction(txId: String, predicate: (SecurityInheritingTransaction) -> Boolean = { true }): SecurityInheritingTransaction {
         // Check if we can skip the subscription
         val transaction = getTransaction(txId)
         if (transaction != null && predicate(transaction)) {
@@ -193,7 +205,7 @@ class SecurityInheritingMonitor(
         val channel = Channel<R>(CONFLATED)
         lock.withLock {
             container.getOrPut(key) {
-                arrayListOf()
+                CopyOnWriteArrayList()
             }.add(channel)
         }
         channel.invokeOnClose {

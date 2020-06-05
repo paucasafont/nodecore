@@ -1006,4 +1006,22 @@ public class Utility {
 
         return bytesToString(input);
     }
+
+    public static String leftPad(char[] initial, char pad, int length) {
+        char[] chars = new char[length];
+        int offset = length - initial.length;
+        for (int i = 0; i < length; i++) {
+            if (i >= offset) {
+                chars[i] = initial[i - offset];
+            } else {
+                chars[i] = pad;
+            }
+        }
+
+        return new String(chars);
+    }
+
+    public static int fromBytes(byte b1, byte b2, byte b3, byte b4) {
+        return b1 << 24 | (b2 & 0xFF) << 16 | (b3 & 0xFF) << 8 | (b4 & 0xFF);
+    }
 }

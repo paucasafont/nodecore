@@ -15,20 +15,20 @@ import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.transactions.transactionManager
 import org.koin.dsl.module
+import org.veriblock.core.params.NetworkConfig
+import org.veriblock.core.params.NetworkParameters
 import org.veriblock.core.utilities.Configuration
 import org.veriblock.lite.NodeCoreLiteKit
 import org.veriblock.lite.core.Context
-import org.veriblock.lite.params.NetworkConfig
-import org.veriblock.lite.params.NetworkParameters
 import org.veriblock.miners.pop.securityinheriting.SecurityInheritingService
 import org.veriblock.miners.pop.service.AltchainPopMinerService
 import org.veriblock.miners.pop.service.ApmTaskService
 import org.veriblock.miners.pop.service.MinerConfig
 import org.veriblock.miners.pop.service.MinerService
-import org.veriblock.miners.pop.service.MockMinerService
+import org.veriblock.miners.pop.service.ApmOperationExplainer
+import org.veriblock.miners.pop.service.mockmining.MockMinerService
 import org.veriblock.miners.pop.service.OperationSerializer
 import org.veriblock.miners.pop.service.OperationService
-import org.veriblock.miners.pop.shell.commands.altchainCommands
 import org.veriblock.miners.pop.shell.configure
 import org.veriblock.miners.pop.storage.KeyValueRepository
 import org.veriblock.miners.pop.storage.KeyValueTable
@@ -62,13 +62,11 @@ val minerModule = module {
     } else {
         single<MinerService> { MockMinerService(get(), get()) }
     }
+    single { ApmOperationExplainer(get()) }
     single { SecurityInheritingService(get(), get()) }
     single {
         CommandFactory().apply {
-            configure(get(), get(), get())
-            if (!minerConfig.mock) {
-                altchainCommands(get(), get(), get())
-            }
+            configure(get(), get(), get(), get(), get(), get(), get())
         }
     }
     single { Shell(get()) }

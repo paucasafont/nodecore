@@ -10,10 +10,11 @@ package org.veriblock.lite.core
 
 import io.kotlintest.shouldBe
 import org.junit.Test
+import org.veriblock.core.params.NetworkConfig
+import org.veriblock.core.params.NetworkParameters
 import org.veriblock.core.utilities.Configuration
 import org.veriblock.lite.net.NodeCoreGateway
-import org.veriblock.lite.params.NetworkConfig
-import org.veriblock.lite.params.NetworkParameters
+import org.veriblock.lite.net.createFullNode
 import org.veriblock.lite.transactionmonitor.readTransactionMonitor
 import org.veriblock.lite.transactionmonitor.writeTransactionMonitor
 import java.io.ByteArrayInputStream
@@ -22,18 +23,17 @@ import java.io.ByteArrayOutputStream
 class WalletProtobufSerializerTest {
     private val networkParameters = NetworkParameters(NetworkConfig())
     private val context = Context(Configuration(), networkParameters)
-    private val gateway = NodeCoreGateway(networkParameters)
 
     @Test
     fun roundTrip() {
         // Given
-        val wallet = randomTransactionMonitor(context, gateway)
+        val wallet = randomTransactionMonitor(context)
         val outputStream = ByteArrayOutputStream()
         outputStream.writeTransactionMonitor(wallet)
         val inputStream = ByteArrayInputStream(outputStream.toByteArray())
 
         // When
-        val roundTrip = inputStream.readTransactionMonitor(context, gateway)
+        val roundTrip = inputStream.readTransactionMonitor(context)
 
         // Then
         wallet shouldBe roundTrip
