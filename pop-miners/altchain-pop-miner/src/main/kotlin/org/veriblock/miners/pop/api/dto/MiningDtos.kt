@@ -32,9 +32,9 @@ data class OperationSummaryListResponse(
 data class OperationSummaryResponse(
     val operationId: String,
     val chain: String,
-    val endorsedBlockNumber: Int?,
+    val endorsedBlockHeight: Int?,
     val state: String,
-    val stateDescription: String
+    val task: String
 )
 
 fun ApmOperation.toSummaryResponse() = OperationSummaryResponse(
@@ -49,8 +49,8 @@ fun ApmOperation.toSummaryResponse() = OperationSummaryResponse(
 data class OperationDetailResponse(
     val operationId: String,
     val chain: String,
+    val endorsedBlockHeight: Int?,
     val state: String,
-    val blockHeight: Int?,
     val task: String,
     val stateDetail: Map<String, String>
 )
@@ -58,8 +58,21 @@ data class OperationDetailResponse(
 fun ApmOperation.toDetailedResponse() = OperationDetailResponse(
     id,
     chain.name,
-    state.name,
     endorsedBlockHeight,
+    state.name,
     state.taskName,
     getDetailedInfo()
+)
+
+@Response("Mining operation workflow")
+data class OperationWorkflow(
+    val operationId: String,
+    val stages: List<OperationWorkflowStage>
+)
+
+@Response("Mining operation workflow stage")
+data class OperationWorkflowStage(
+    val status: String,
+    val taskName: String,
+    val extraInformation: String
 )

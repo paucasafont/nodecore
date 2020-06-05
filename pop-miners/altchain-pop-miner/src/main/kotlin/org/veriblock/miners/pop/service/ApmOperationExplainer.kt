@@ -3,6 +3,8 @@ package org.veriblock.miners.pop.service
 import org.veriblock.core.utilities.extensions.formatAtomicLongWithDecimal
 import org.veriblock.core.utilities.extensions.toHex
 import org.veriblock.lite.core.Context
+import org.veriblock.miners.pop.api.dto.OperationWorkflow
+import org.veriblock.miners.pop.api.dto.OperationWorkflowStage
 import org.veriblock.miners.pop.core.ApmOperation
 import org.veriblock.miners.pop.core.ApmOperationState
 import org.veriblock.miners.pop.core.MiningOperationState
@@ -11,13 +13,13 @@ import org.veriblock.miners.pop.service.ApmOperationExplainer.OperationStatus.*
 class ApmOperationExplainer(
     val context: Context
 ) {
-    fun explainOperation(operation: ApmOperation): List<OperationStage> {
+    fun explainOperation(operation: ApmOperation): OperationWorkflow {
         val currentState = if (!operation.isFailed()) {
             operation.state
         } else {
             getStateFromFailedOperation(operation)
         }
-        return ApmOperationState.ALL.map { operationState ->
+        return OperationWorkflow(ApmOperationState.ALL.map { operationState ->
             val status = operationState.getOperationStatus(currentState)
             val currentFailed = operation.isFailed() && status == CURRENT
             val statusDisplay = if (status != PENDING) {
@@ -28,7 +30,7 @@ class ApmOperationExplainer(
             val taskName = (operationState.previousState?.taskName ?: "Start").toUpperCase().replace(' ', '_')
             val taskId = operationState.id + 1
             val taskIdString = if (taskId / 10 > 0) "$taskId." else " $taskId."
-            OperationStage(
+            OperationWorkflowStage(
                 status = statusDisplay,
                 taskName = "$taskIdString ${taskName}",
                 extraInformation = when (status) {
@@ -37,11 +39,11 @@ class ApmOperationExplainer(
                     PENDING -> operationState.getPendingHint(operation)
                 }
             )
-        } + OperationStage(
+        } + OperationWorkflowStage(
             if (operation.state == MiningOperationState.COMPLETED) "DONE" else "",
             "11. COMPLETED",
             if (operation.state == MiningOperationState.COMPLETED) "Paid amount: ${operation.payoutAmount?.formatAtomicLongWithDecimal()}" else ""
-        )
+        ))
     }
 
     private fun getStateFromFailedOperation(operation: ApmOperation): MiningOperationState {
@@ -140,12 +142,6 @@ class ApmOperationExplainer(
     } else {
         ""
     }
-
-    data class OperationStage (
-        val status: String,
-        val taskName: String,
-        val extraInformation: String
-    )
 
     enum class OperationStatus {
         PENDING,
