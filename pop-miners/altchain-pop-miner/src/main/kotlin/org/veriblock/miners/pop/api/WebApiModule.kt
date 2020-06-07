@@ -4,7 +4,7 @@ import org.koin.dsl.module
 import org.veriblock.miners.pop.api.controller.MiningController
 
 val webApiModule = module {
-    single { MiningController(get(), get()) }
+    single { MiningController(get(), get(), get()) }
 
     single {
         ApiServer(
